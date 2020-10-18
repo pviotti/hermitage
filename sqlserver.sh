@@ -12,13 +12,18 @@ elif [ -n $1 ]; then
 fi
 
 export PAGER=cat
-tmux kill-session -t SQL || true
-tmux new-session -d -n SQL -s SQL "mssql-cli -S localhost -U sa -P passWord123"
-tmux split-window -h -t SQL "mssql-cli -S localhost -U sa -P passWord123"
+tmux kill-session -t SQL > /dev/null 2>&1 || true
+rm -rf /tmp/sql0.out /tmp/sql1.out
+tmux new-session -d -n SQL -s SQL "mssql-cli -S localhost -U sa -P passWord123 2>&1 | tee /tmp/sql0.out"
+tmux split-window -h -t SQL "mssql-cli -S localhost -U sa -P passWord123  2>&1 | tee /tmp/sql1.out"
 
 tell() {
   tmux send-keys -t $1 "$2" Enter
+  sleep 1 # FIXME makeshift synchronization between sessions
 }
+
+tell 0 "SET LOCK_TIMEOUT -1"
+tell 1 "SET LOCK_TIMEOUT -1"
 
 SETUP="drop database if exists test_lock
 drop database if exists test_snap1
@@ -37,14 +42,15 @@ create table test_snap1.dbo.test (id int primary key, value int)
 create table test_snap2.dbo.test (id int primary key, value int)
 insert into test_lock.dbo.test  (id, value) values(1, 10), (2, 20)
 insert into test_snap1.dbo.test (id, value) values(1, 10), (2, 20)
-insert into test_snap2.dbo.test (id, value) values(1, 10), (2, 20)"
+insert into test_snap2.dbo.test (id, value) values(1, 10), (2, 20)
+print 'setup done'"
 
-tell 0 $SETUP
-tell 0 "SET LOCK_TIMEOUT -1"
-tell 1 "SET LOCK_TIMEOUT -1"
+tell 0 "$SETUP"
 
-# FIXME await/synchronize SQL sessions
-sleep 10
+echo -n "Waiting for setup to finish"
+while grep  -e "^setup done" /tmp/sql0.out > /dev/null;
+do echo -n "."; sleep 0.5; done
+echo
 
 case $test in
   "g0")
